@@ -14,7 +14,7 @@ return{title:p.title,thumb:info.thumburl||info.url,url:info.url,description:meta
 }).filter(x=>x.url);
 }
 const images=await search(topic+" photograph",8);
-const audio=await search("instrumental background music",8);
+const audio=await search("filetype:audio instrumental music",12);
 const tracks=audio.filter(x=>/^audio\/(mpeg|ogg|wav|flac)/i.test(x.mime)).slice(0,4);
 return res.status(200).json({images:images.slice(0,8),tracks});
 }catch(e){return res.status(500).json({error:e.message||"Media search failed"});}
