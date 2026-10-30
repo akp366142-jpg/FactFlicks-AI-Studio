@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
@@ -8,7 +8,7 @@ import './style.css';
 function App() {
  const [topic,setTopic]=useState(''); const [kind,setKind]=useState('Mystery'); const [language,setLanguage]=useState('Hindi');
  const [length,setLength]=useState('Short · 45 sec'); const [voice,setVoice]=useState('Male'); const [result,setResult]=useState('');
- const [copied,setCopied]=useState(false); const [busy,setBusy]=useState(false); const [status,setStatus]=useState(''); const [videoUrl,setVideoUrl]=useState('');
+ const [copied,setCopied]=useState(false); const [busy,setBusy]=useState(false); const [status,setStatus]=useState(''); const [videoUrl,setVideoUrl]=useState(''); const [voiceBlob,setVoiceBlob]=useState(null); const [recording,setRecording]=useState(false); const recorderRef=useRef(null); const micStreamRef=useRef(null);
  function generateDraft(){
   if(!topic.trim()) return;
   const title=topic.trim();
@@ -18,6 +18,16 @@ function App() {
   setResult([hook,body,ending].join('\n\n'));setVideoUrl('');
  }
  async function copyText(){await navigator.clipboard.writeText(result);setCopied(true);setTimeout(()=>setCopied(false),1800);}
+ async function startNarration(){
+  if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){setStatus('Mic recording ke liye secure site (HTTPS) aur supported browser chahiye.');return;}
+  try{
+   const mic=await navigator.mediaDevices.getUserMedia({audio:true});micStreamRef.current=mic;
+   const mr=new MediaRecorder(mic);const parts=[];mr.ondataavailable=e=>{if(e.data.size)parts.push(e.data);};
+   mr.onstop=()=>{setVoiceBlob(new Blob(parts,{type:mr.mimeType||'audio/webm'}));mic.getTracks().forEach(t=>t.stop());micStreamRef.current=null;setRecording(false);setStatus('Narration recorded! Ab MP4 export karo.');};
+   recorderRef.current=mr;mr.start();setRecording(true);setStatus('Ab apni script microphone mein padho. Stop dabane par recording save hogi.');
+  }catch(e){setStatus('Microphone permission nahi mili: '+e.message);}
+ }
+ function stopNarration(){if(recorderRef.current&&recorderRef.current.state!=='inactive')recorderRef.current.stop();}
  function speakScript(){
   if(!('speechSynthesis' in window)){setStatus('This browser does not support voice preview.');return;}
   window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(result);u.lang=language==='Hindi'?'hi-IN':'en-US';u.rate=.95;
@@ -35,19 +45,26 @@ function App() {
  }
  async function exportVideo(){
   if(!result.trim()){setStatus('Generate the script first.');return;}if(!window.MediaRecorder){setStatus('Use a recent Chrome or Edge browser for video export.');return;}
-  setBusy(true);setVideoUrl('');setStatus('Creating animated video…');let stream;
+  setBusy(true);setVideoUrl('');setStatus('Creating video with narration…');let stream;let narrationAudio;
   try{
    const canvas=document.createElement('canvas');canvas.width=720;canvas.height=1280;const ctx=canvas.getContext('2d');stream=canvas.captureStream(30);
+   if(voiceBlob){
+    narrationAudio=new Audio(URL.createObjectURL(voiceBlob));narrationAudio.preload='auto';
+    await new Promise((resolve,reject)=>{narrationAudio.onloadedmetadata=resolve;narrationAudio.onerror=()=>reject(new Error('Narration audio could not be loaded'));});
+    const audioStream=narrationAudio.captureStream?narrationAudio.captureStream():narrationAudio.mozCaptureStream?.();
+    if(!audioStream)throw new Error('Audio mixing not supported in this browser. Try Chrome desktop.');
+    audioStream.getAudioTracks().forEach(t=>stream.addTrack(t));
+   }
    const mime=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
    const rec=new MediaRecorder(stream,mime?{mimeType:mime}:{});const chunks=[];rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-   const scenes=result.split(/\n\n+/).filter(Boolean).slice(0,3);const titles=[topic||'FactFlicks','THE STORY','DID YOU KNOW?'];const secs=length.includes('10 min')?12:length.includes('5 min')?10:8;const each=secs/scenes.length;
+   const scenes=result.split(/\n\n+/).filter(Boolean).slice(0,3);const titles=[topic||'FactFlicks','THE STORY','DID YOU KNOW?'];const secs=voiceBlob?Math.max(8,Math.ceil(narrationAudio.duration)): (length.includes('10 min')?12:length.includes('5 min')?10:8);const each=secs/scenes.length;
    const done=new Promise((resolve,reject)=>{rec.onstop=()=>resolve(new Blob(chunks,{type:rec.mimeType||'video/webm'}));rec.onerror=()=>reject(new Error('Recording failed'));});
-   rec.start();for(let i=0;i<scenes.length;i++){const start=performance.now();while(performance.now()-start<each*1000){drawScene(ctx,canvas,titles[i],scenes[i],i,(performance.now()-start)/1000);await new Promise(r=>setTimeout(r,33));}}
-   rec.stop();const webm=await done;stream.getTracks().forEach(t=>t.stop());setStatus('Loading MP4 encoder…');
+   rec.start();if(narrationAudio){await narrationAudio.play();}for(let i=0;i<scenes.length;i++){const start=performance.now();while(performance.now()-start<each*1000){drawScene(ctx,canvas,titles[i],scenes[i],i,(performance.now()-start)/1000);await new Promise(r=>setTimeout(r,33));}}
+   rec.stop();const webm=await done;stream.getTracks().forEach(t=>t.stop());if(narrationAudio){narrationAudio.pause();URL.revokeObjectURL(narrationAudio.src);}setStatus('Loading MP4 encoder…');
    const ff=new FFmpeg();await ff.load({coreURL:'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js'});
    await ff.writeFile('input.webm',await fetchFile(webm));await ff.exec(['-i','input.webm','-vf','scale=720:1280','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart','output.mp4']);
    const data=await ff.readFile('output.mp4');setVideoUrl(URL.createObjectURL(new Blob([data.buffer],{type:'video/mp4'})));setStatus('MP4 ready! Download it below.');await ff.terminate();
-  }catch(e){if(stream)stream.getTracks().forEach(t=>t.stop());setStatus('Export failed: '+(e.message||'Browser memory or compatibility issue. Try Chrome.'));}
+  }catch(e){if(stream)stream.getTracks().forEach(t=>t.stop());if(narrationAudio){narrationAudio.pause();URL.revokeObjectURL(narrationAudio.src);}setStatus('Export failed: '+(e.message||'Browser memory or compatibility issue. Try Chrome.'));}
   finally{setBusy(false);}
  }
  return <div className="app-shell"><header className="topbar"><a className="brand" href="#"><span className="brand-icon"><Film size={20}/></span><span>FACT<span className="accent">FLICKS</span><small>AI STUDIO</small></span></a><span className="phase">CREATOR BETA · PHASE 2</span></header><main>
@@ -61,9 +78,10 @@ function App() {
    <button className="generate" onClick={generateDraft}><WandSparkles size={18}/> Generate script draft <span>↗</span></button><p className="note"><Lightbulb size={14}/> Script template-based hai. Facts ko publish karne se pehle verify karo.</p>
   </div><div className="panel output-panel"><div className="panel-heading"><div><span className="step">02 / YOUR STORY</span><h2>Script & video</h2></div><span className="live-dot">● READY</span></div>
    {result?<><pre className="result">{result}</pre><div className="action-row"><button className="copy" onClick={copyText}>{copied?<Check size={16}/>:<Copy size={16}/>} {copied?'Copied':'Copy script'}</button><button className="copy" onClick={speakScript}><Volume2 size={16}/> Voice preview</button></div>
+   <div className="narration-box"><b>Record your narration</b><p>Script ko apni awaaz mein padho. Ye recording MP4 ke saath mix hogi.</p>{!recording?<button className="copy" onClick={startNarration}><Mic2 size={16}/> Record voice</button>:<button className="copy stop-record" onClick={stopNarration}>■ Stop recording</button>}{voiceBlob&&!recording&&<span className="recorded">✓ Narration ready</span>}</div>
    <button className="generate export" onClick={exportVideo} disabled={busy}>{busy?<LoaderCircle className="spin" size={18}/>:<Film size={18}/>} {busy?'Creating video…':'Create & export MP4'}</button>
    {status&&<p className="status">{status}</p>}{videoUrl&&<div className="download-wrap"><video src={videoUrl} controls playsInline/><a className="download" href={videoUrl} download="factflicks-video.mp4"><Download size={17}/> Download MP4</a></div>}</>
    :<div className="empty"><div className="empty-icon"><Play size={25}/></div><h3>Your next video starts here.</h3><p>Topic likho aur <b>Generate script draft</b> dabao. Script yahan dikhegi.</p><div className="mini-tags"><span>HOOK</span><span>SCENES</span><span>VOICEOVER</span></div></div>}
-  </div></section><footer><span>FACTFLICKS AI STUDIO</span><span>Browser-based creator beta · 2026</span></footer></main></div>;
+  </div></section><footer><span>FACTFLICKS AI STUDIO</span><span>Your voice can be mixed into the exported MP4 · 2026</span></footer></main></div>;
 }
 createRoot(document.getElementById('root')).render(<App />);
