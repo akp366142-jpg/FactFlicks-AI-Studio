@@ -1,7 +1,7 @@
 import React,{useState}from"react";
 import{createRoot}from"react-dom/client";
 import{FFmpeg}from"@ffmpeg/ffmpeg";
-import{fetchFile}from"@ffmpeg/util";
+import{fetchFile,toBlobURL}from"@ffmpeg/util";
 import{Film,Sparkles,Download,LoaderCircle,ExternalLink,Image as ImageIcon,Music2}from"lucide-react";
 import"./style.css";
 function App(){
@@ -52,7 +52,7 @@ recorder.start();voiceSource.start();if(musicSource)musicSource.start();const st
 await new Promise(resolve=>{function tick(){const elapsed=(performance.now()-start)/1000;frame(elapsed);if(elapsed<duration)requestAnimationFrame(tick);else resolve();}tick();});
 recorder.stop();const webm=await done;stream.getTracks().forEach(t=>t.stop());voiceSource.stop();if(musicSource)musicSource.stop();await audioCtx.close();
 setStatus("MP4 encoder load ho raha hai…");
-const ff=new FFmpeg();await ff.load({coreURL:"https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js"});
+const ff=new FFmpeg();const baseURL="https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";await ff.load({coreURL:await toBlobURL(baseURL+"/ffmpeg-core.js","text/javascript"),wasmURL:await toBlobURL(baseURL+"/ffmpeg-core.wasm","application/wasm")});
 await ff.writeFile("input.webm",await fetchFile(webm));await ff.exec(["-i","input.webm","-c:v","libx264","-c:a","aac","-pix_fmt","yuv420p","-movflags","+faststart","output.mp4"]);
 const out=await ff.readFile("output.mp4");setVideoUrl(URL.createObjectURL(new Blob([out.buffer],{type:"video/mp4"})));await ff.terminate();setStatus("Tumhara narrated MP4 ready hai! Download karo.");
 }catch(e){if(stream)stream.getTracks().forEach(t=>t.stop());if(audioCtx&&audioCtx.state!=="closed")await audioCtx.close();throw e;}
