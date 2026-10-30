@@ -7,6 +7,7 @@ A responsive React + Vite starter for a Hindi/English video-creation workspace.
 - Topic, style, language, duration and voice selections
 - Template-based script draft
 - Browser-native speech preview (uses voices installed on the user's device/browser)
+- Microphone narration recording, mixed into the exported MP4 when supported
 - Animated vertical 720×1280 scene-card video export
 - MP4 conversion in the browser using FFmpeg.wasm
 - Copy script and download MP4
