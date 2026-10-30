@@ -8,7 +8,7 @@ import './style.css';
 function App() {
  const [topic,setTopic]=useState(''); const [kind,setKind]=useState('Mystery'); const [language,setLanguage]=useState('Hindi');
  const [length,setLength]=useState('Short · 70 sec'); const [voice,setVoice]=useState('Male'); const [result,setResult]=useState('');
- const [copied,setCopied]=useState(false); const [busy,setBusy]=useState(false); const [status,setStatus]=useState(''); const [videoUrl,setVideoUrl]=useState('');
+ const [copied,setCopied]=useState(false); const [busy,setBusy]=useState(false); const [status,setStatus]=useState(''); const [videoUrl,setVideoUrl]=useState(''); const [music,setMusic]=useState(true); const [visuals,setVisuals]=useState([]);
  function generateDraft(){
   if(!topic.trim()) return;
   const title=topic.trim();
@@ -25,9 +25,9 @@ function App() {
   if(vs.length)u.voice=vs.find(v=>voice==='Female'?/female|woman/i.test(v.name):/male|man/i.test(v.name))||vs[0];
   u.onstart=()=>setStatus('Voice preview playing…');u.onend=()=>setStatus('Voice preview complete.');u.onerror=()=>setStatus('Voice preview unavailable on this device.');window.speechSynthesis.speak(u);
  }
- function drawScene(ctx,c,heading,caption,index,elapsed){
-  const w=c.width,h=c.height,g=ctx.createLinearGradient(0,0,w,h);g.addColorStop(0,['#111b3b','#251344','#102c36'][index%3]);g.addColorStop(1,['#46206c','#111827','#3b1c42'][index%3]);ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
-  ctx.globalAlpha=.16;ctx.fillStyle='#c4b5fd';for(let i=0;i<9;i++){ctx.beginPath();ctx.arc((i*113+elapsed*16)%w,(i*197+80)%h,30+(i%3)*25,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
+ async function findVisuals(){\n  const q=encodeURIComponent(topic+' '+kind+' photograph');\n  try{const r=await fetch('https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch='+q+'&gsrnamespace=6&gsrlimit=6&prop=imageinfo&iiprop=url&iiurlwidth=1000&format=json&origin=*');const j=await r.json();const pages=Object.values(j.query?.pages||{});const urls=pages.map(p=>p.imageinfo?.[0]?.thumburl||p.imageinfo?.[0]?.url).filter(Boolean);const imgs=await Promise.all(urls.map(src=>new Promise(resolve=>{const im=new Image();im.crossOrigin='anonymous';im.onload=()=>resolve(im);im.onerror=()=>resolve(null);im.src=src;})));setVisuals(imgs.filter(Boolean));return imgs.filter(Boolean);}catch(e){setStatus('Images fetch nahi ho paaye; fallback visuals use honge.');return []; }\n }\n function drawScene(ctx,c,heading,caption,index,elapsed,imgs=[]){
+  const w=c.width,h=c.height;const im=imgs[index%Math.max(imgs.length,1)];if(im){const scale=Math.max(w/im.width,h/im.height),iw=im.width*scale,ih=im.height*scale;ctx.drawImage(im,(w-iw)/2,(h-ih)/2,iw,ih);}else{const g=ctx.createLinearGradient(0,0,w,h);g.addColorStop(0,['#111b3b','#251344','#102c36'][index%3]);g.addColorStop(1,['#46206c','#111827','#3b1c42'][index%3]);ctx.fillStyle=g;ctx.fillRect(0,0,w,h);}
+  ctx.fillStyle='rgba(3,7,18,.62)';ctx.fillRect(0,0,w,h);ctx.globalAlpha=.16;ctx.fillStyle='#c4b5fd';for(let i=0;i<9;i++){ctx.beginPath();ctx.arc((i*113+elapsed*16)%w,(i*197+80)%h,30+(i%3)*25,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
   ctx.textAlign='center';ctx.fillStyle='#c4b5fd';ctx.font='bold 24px Arial';ctx.fillText('FACTFLICKS  •  '+kind.toUpperCase(),w/2,120);
   ctx.fillStyle='#fff';ctx.font='bold 58px Arial';const words=heading.split(' ');let lines=[''];words.forEach(word=>{let n=lines.length-1;if(ctx.measureText(lines[n]+' '+word).width>w-100)lines.push(word);else lines[n]+=(lines[n]?' ':'')+word;});const start=h*.39-(lines.length-1)*38;lines.forEach((line,i)=>ctx.fillText(line,w/2,start+i*78));
   ctx.fillStyle='#ddd6fe';ctx.font='30px Arial';const cw=caption.split(' ');let cl=[''];cw.forEach(word=>{let n=cl.length-1;if(ctx.measureText(cl[n]+' '+word).width>w-100)cl.push(word);else cl[n]+=(cl[n]?' ':'')+word;});cl.forEach((line,i)=>ctx.fillText(line,w/2,h*.69+i*44));
@@ -35,15 +35,15 @@ function App() {
  }
  async function exportVideo(){
   if(!result.trim()){setStatus('Generate the script first.');return;}if(!window.MediaRecorder){setStatus('Use a recent Chrome or Edge browser for video export.');return;}
-  setBusy(true);setVideoUrl('');setStatus('Creating your 60–80 second vertical video…');let stream;
+  setBusy(true);setVideoUrl('');setStatus('Topic ke liye images dhoondh raha hoon…');let stream;let audioCtx;let musicOsc=[];
   try{
-   const canvas=document.createElement('canvas');canvas.width=720;canvas.height=1280;const ctx=canvas.getContext('2d');stream=canvas.captureStream(30);
+   const imgs=await findVisuals();const canvas=document.createElement('canvas');canvas.width=720;canvas.height=1280;const ctx=canvas.getContext('2d');stream=canvas.captureStream(30);\n   if(music){audioCtx=new (window.AudioContext||window.webkitAudioContext)();const dest=audioCtx.createMediaStreamDestination();const master=audioCtx.createGain();master.gain.value=.035;master.connect(dest);[110,164.81,220].forEach((hz,i)=>{const o=audioCtx.createOscillator();const g=audioCtx.createGain();o.type='sine';o.frequency.value=hz;g.gain.value=[.5,.25,.15][i];o.connect(g);g.connect(master);o.start();musicOsc.push(o);});dest.stream.getAudioTracks().forEach(t=>stream.addTrack(t));}
    const mime=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
    const rec=new MediaRecorder(stream,mime?{mimeType:mime}:{});const chunks=[];rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
    const scenes=result.split(/\n\n+/).filter(Boolean).slice(0,3);const titles=[topic||'FactFlicks','THE STORY','DID YOU KNOW?'];const secs=length.includes('60')?60:length.includes('80')?80:70;const each=secs/scenes.length;
    const done=new Promise((resolve,reject)=>{rec.onstop=()=>resolve(new Blob(chunks,{type:rec.mimeType||'video/webm'}));rec.onerror=()=>reject(new Error('Recording failed'));});
-   rec.start();for(let i=0;i<scenes.length;i++){const start=performance.now();while(performance.now()-start<each*1000){drawScene(ctx,canvas,titles[i],scenes[i],i,(performance.now()-start)/1000);await new Promise(r=>setTimeout(r,33));}}
-   rec.stop();const webm=await done;stream.getTracks().forEach(t=>t.stop());setStatus('Loading MP4 encoder…');
+   rec.start();for(let i=0;i<scenes.length;i++){const start=performance.now();while(performance.now()-start<each*1000){drawScene(ctx,canvas,titles[i],scenes[i],i,(performance.now()-start)/1000,imgs);await new Promise(r=>setTimeout(r,33));}}
+   rec.stop();const webm=await done;stream.getTracks().forEach(t=>t.stop());musicOsc.forEach(o=>{try{o.stop()}catch{}});if(audioCtx)await audioCtx.close();setStatus('Loading MP4 encoder…');
    const ff=new FFmpeg();await ff.load({coreURL:'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js'});
    await ff.writeFile('input.webm',await fetchFile(webm));await ff.exec(['-i','input.webm','-vf','scale=720:1280','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart','output.mp4']);
    const data=await ff.readFile('output.mp4');setVideoUrl(URL.createObjectURL(new Blob([data.buffer],{type:'video/mp4'})));setStatus('MP4 ready! Download it below.');await ff.terminate();
@@ -57,8 +57,8 @@ function App() {
    <div className="grid-two"><div><label className="field-label">VIDEO STYLE</label><select value={kind} onChange={e=>setKind(e.target.value)}>{['Mystery','Facts','Documentary','Cinematic','Animation'].map(x=><option key={x}>{x}</option>)}</select></div>
    <div><label className="field-label"><Languages size={13}/> LANGUAGE</label><select value={language} onChange={e=>setLanguage(e.target.value)}><option>Hindi</option><option>English</option></select></div>
    <div><label className="field-label"><Clock3 size={13}/> LENGTH</label><select value={length} onChange={e=>setLength(e.target.value)}><option>Short · 60 sec</option><option>Short · 70 sec</option><option>Short · 80 sec</option></select></div>
-   <div><label className="field-label"><Mic2 size={13}/> VOICE</label><select value={voice} onChange={e=>setVoice(e.target.value)}><option>Male</option><option>Female</option></select></div></div>
-   <button className="generate" onClick={generateDraft}><WandSparkles size={18}/> Generate script draft <span>↗</span></button><p className="note"><Lightbulb size={14}/> Script template-based hai. Facts ko publish karne se pehle verify karo.</p>
+   <div><label className="field-label"><Mic2 size={13}/> AI VOICE PREFERENCE</label><select value={voice} onChange={e=>setVoice(e.target.value)}><option>Male</option><option>Female</option></select></div></div>
+   <label className="music-toggle"><input type="checkbox" checked={music} onChange={e=>setMusic(e.target.checked)}/> Background music on video</label><button className="generate" onClick={generateDraft}><WandSparkles size={18}/> Generate script draft <span>↗</span></button><p className="note"><Lightbulb size={14}/> Script template-based hai. Facts ko publish karne se pehle verify karo.</p>
   </div><div className="panel output-panel"><div className="panel-heading"><div><span className="step">02 / YOUR STORY</span><h2>Script & video</h2></div><span className="live-dot">● READY</span></div>
    {result?<><pre className="result">{result}</pre><div className="action-row"><button className="copy" onClick={copyText}>{copied?<Check size={16}/>:<Copy size={16}/>} {copied?'Copied':'Copy script'}</button><button className="copy" onClick={speakScript}><Volume2 size={16}/> Voice preview</button></div>
    <button className="generate export" onClick={exportVideo} disabled={busy}>{busy?<LoaderCircle className="spin" size={18}/>:<Film size={18}/>} {busy?'Creating video…':'Create & export MP4'}</button>
